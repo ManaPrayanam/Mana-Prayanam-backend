@@ -6,7 +6,8 @@ const GENDERS = new Set(['woman', 'man', 'non_binary', 'prefer_not_to_say']);
 
 function addCustomerAuth(router, pool) {
   async function verify(req, res, signup) {
-    if (process.env.NODE_ENV === 'production' || process.env.ENABLE_TEST_OTP !== 'true') {
+    // Allow demo OTP when ENABLE_TEST_OTP=true (including Render production).
+    if (process.env.ENABLE_TEST_OTP !== 'true') {
       return res.status(503).json({ error: 'Mobile verification is unavailable.' });
     }
 
