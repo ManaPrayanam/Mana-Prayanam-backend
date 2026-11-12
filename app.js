@@ -5,6 +5,14 @@ function createApp({ pool, enableDbCheck = false }) {
   const app = express();
   app.disable('x-powered-by');
 
+  app.use((req, res, next) => {
+    const started = Date.now();
+    res.on('finish', () => {
+      console.log(`${req.method} ${req.originalUrl} -> ${res.statusCode} (${Date.now() - started}ms)`);
+    });
+    next();
+  });
+
   app.get('/api/health', (_req, res) => {
     res.json({ status: 'ok' });
   });
