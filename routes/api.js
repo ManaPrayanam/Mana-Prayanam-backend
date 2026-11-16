@@ -94,6 +94,104 @@ function createApi(pool) {
     res.status(201).json(rows[0]);
   });
 
+  const FARE_RATES = {
+    bike: { base: 20, perKm: 8, minimum: 20, etaMinutesPerKm: 3.2 },
+    auto: { base: 30, perKm: 12, minimum: 30, etaMinutesPerKm: 3.8 },
+  };
+
+  function haversineKm(a, b) {
+    const toRad = (d) => (d * Math.PI) / 180;
+    const R = 6371;
+    const dLat = toRad(b.lat - a.lat);
+    const dLng = toRad(b.lng - a.lng);
+    const lat1 = toRad(a.lat);
+    const lat2 = toRad(b.lat);
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(h));
+  }
+
+  function fareFor(vehicle, distanceKm) {
+    const rate = FARE_RATES[vehicle];
+    const raw = rate.base + distanceKm * rate.perKm;
+    const fareInr = Math.round(Math.max(rate.minimum, raw));
+    const durationMin = Math.max(2, Math.round(distanceKm * rate.etaMinutesPerKm));
+    return { vehicle, fareInr, durationMin, distanceKm: Math.round(distanceKm * 10) / 10 };
+  }
+
+  function isCoord(value) {
+    return value && Number.isFinite(value.lat) && Number.isFinite(value.lng)
+      && value.lat >= -90 && value.lat <= 90 && value.lng >= -180 && value.lng <= 180;
+  }
+
+  /** Dummy quote: road distance via OSRM (fallback haversine×1.3), then fare formula. */
+  router.post('/rides/quote', role('rider'), async (req, res) => {
+    const { pickup, drop } = req.body ?? {};
+    if (!isCoord(pickup) || !isCoord(drop)) {
+      return res.status(400).json({ error: 'Provide pickup and drop coordinates.' });
+    }
+    const from = { lat: Number(pickup.lat), lng: Number(pickup.lng) };
+    const to = { lat: Number(drop.lat), lng: Number(drop.lng) };
+
+    let distanceKm = Math.max(0.3, haversineKm(from, to) * 1.3);
+    let durationSec = Math.round(distanceKm * 180);
+    let geometry = {
+      type: 'LineString',
+      coordinates: [[from.lng, from.lat], [to.lng, to.lat]],
+    };
+
+    try {
+      const url = `https://router.project-osrm.org/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}?overview=full&geometries=geojson`;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
+      try {
+        const upstream = await fetch(url, {
+          headers: { Accept: 'application/json', 'User-Agent': 'ManaPrayanam/1.0' },
+          signal: controller.signal,
+        });
+        if (upstream.ok) {
+          const data = await upstream.json();
+          const route = data?.routes?.[0];
+          if (route?.distance > 0) {
+            distanceKm = Math.max(0.3, route.distance / 1000);
+            durationSec = Math.round(route.duration || durationSec);
+            if (route.geometry?.coordinates?.length) geometry = route.geometry;
+          }
+        }
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch {
+      // Keep haversine fallback — still a valid dummy quote.
+    }
+
+    // Dummy nearby fleet around the pickup pin (not along the route).
+    const nearbyOffsets = [
+      { dLat: 0.00055, dLng: 0.00025 },
+      { dLat: -0.00035, dLng: 0.0006 },
+      { dLat: 0.0002, dLng: -0.00055 },
+    ];
+    const nearbyVehicles = nearbyOffsets.map((o, i) => ({
+      id: `near-${i + 1}`,
+      lat: from.lat + o.dLat,
+      lng: from.lng + o.dLng,
+    }));
+
+    res.json({
+      pickup: from,
+      drop: to,
+      distanceKm: Math.round(distanceKm * 10) / 10,
+      durationMin: Math.max(2, Math.round(durationSec / 60)),
+      geometry,
+      nearbyVehicles,
+      // keep old key for a release — same pickup-cluster points
+      nearbyBikes: nearbyVehicles,
+      quotes: {
+        bike: fareFor('bike', distanceKm),
+        auto: fareFor('auto', distanceKm),
+      },
+    });
+  });
+
   router.post('/rides', role('rider'), async (req, res) => {
     const { pickup, destination } = req.body ?? {};
     if (!text(pickup, 300) || !text(destination, 300)) {
