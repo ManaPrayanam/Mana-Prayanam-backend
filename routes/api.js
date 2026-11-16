@@ -164,11 +164,14 @@ function createApi(pool) {
       // Keep haversine fallback — still a valid dummy quote.
     }
 
-    // Dummy nearby fleet around the pickup pin (not along the route).
+    // Dummy nearby fleet around the pickup pin (Rapido-style scatter).
     const nearbyOffsets = [
-      { dLat: 0.00055, dLng: 0.00025 },
-      { dLat: -0.00035, dLng: 0.0006 },
-      { dLat: 0.0002, dLng: -0.00055 },
+      { dLat: 0.0007, dLng: 0.00015 },
+      { dLat: 0.00035, dLng: 0.00075 },
+      { dLat: -0.0002, dLng: 0.00085 },
+      { dLat: -0.00065, dLng: 0.0003 },
+      { dLat: -0.00045, dLng: -0.00055 },
+      { dLat: 0.00025, dLng: -0.0007 },
     ];
     const nearbyVehicles = nearbyOffsets.map((o, i) => ({
       id: `near-${i + 1}`,
